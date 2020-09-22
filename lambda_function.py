@@ -9,8 +9,8 @@ SLACK_WEBHOOK_URL = os.environ.get("slack_webhook_url")
 SLACK_CHANNEL = "#cloudops-ecr-scan-results"
 
 
-def format_slack_message(image_name, image_tag, build_url, vuln_findings):
-    text = f"Vuln scan for {image_name}:{image_tag} found {vuln_findings} (build: {build_url})"
+def format_slack_message(image_name, image_tag, vuln_findings, build_url, s3_bucket, s3_object_path):
+    text = f"Vuln scan for `{image_name}:{image_tag}` found `{vuln_findings}` vulnerabilities, full report on s3: `s3://{s3_bucket}/{s3_object_path}` ({build_url})"
     channel = SLACK_CHANNEL
     username = "ECR vuln scan report"
     icon_emoji = ":ghost:"
@@ -69,7 +69,7 @@ def lambda_handler(event, context):
     finding_severity_counts = vuln_report_data.get("imageScanFindings").get("findingSeverityCounts")
     print(f"finding severity counts: {finding_severity_counts}")
 
-    slack_message = format_slack_message(image_name, image_tag, finding_severity_counts, build_url)
+    slack_message = format_slack_message(image_name, image_tag, finding_severity_counts, build_url, vuln_scan_report_s3_bucket, vuln_scan_report_s3_object_path)
     post_slack_message(slack_message)
 
     return True
