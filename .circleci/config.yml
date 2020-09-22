@@ -18,7 +18,19 @@ workflows:
           aws_access_key_id: ${AWS_ACCESS_KEY_ID}
           aws_secret_access_key: ${AWS_SECRET_ACCESS_KEY}
           aws_account_id: "909130508899"
-          aws_region: "eu-west-1"
+          aws_region: eu-west-1
+          docker_image_name: poc-dirty-vulnerable-container
+          docker_image_tag: ${CIRCLE_SHA1}
+          context: ci_cd_poc
+
+      - ecr_vulnerability_scan:
+          requires: ["push_to_ecr"]
+          name: ecr_vulnerability_scan
+          repository_name: poc-dirty-vulnerable-container
+          image_id: imageTag=${CIRCLE_SHA1}
+          aws_access_key_id: ${AWS_ACCESS_KEY_ID}
+          aws_secret_access_key: ${AWS_SECRET_ACCESS_KEY}
+          aws_region: eu-west-1
           docker_image_name: poc-dirty-vulnerable-container
           docker_image_tag: ${CIRCLE_SHA1}
           context: ci_cd_poc
@@ -63,10 +75,10 @@ jobs:
     docker:
       - image: docker:18.09.6
     steps:
-      - init:
+      - run:
           name: "Installing dependencies"
           command: |
-            apk add --no-cache ca-certificates py-pip bash git > /dev/null 2>&1
+            apk add --no-cache ca-certificates py-pip bash git jq > /dev/null 2>&1
             pip install awscli > /dev/null 2>&1
       - setup_remote_docker
       - attach_workspace:
@@ -87,3 +99,52 @@ jobs:
                 << parameters.aws_account_id >>.dkr.ecr.<< parameters.aws_region >>.amazonaws.com/<< parameters.docker_image_name >>:<< parameters.docker_image_tag >>
             eval "$(aws ecr get-login --region << parameters.aws_region >> --no-include-email)"
             docker push << parameters.aws_account_id >>.dkr.ecr.<< parameters.aws_region >>.amazonaws.com/<< parameters.docker_image_name >>:<< parameters.docker_image_tag >>
+
+  ecr_vulnerability_scan:
+    parameters:
+      repository_name:
+        type: string
+      image_id:
+        type: string
+      aws_access_key_id:
+        type: string
+      aws_secret_access_key:
+        type: string
+      aws_region:
+        type: string
+      docker_image_name:
+        type: string
+      docker_image_tag:
+        type: string
+    docker:
+      - image: alpine:3
+    steps:
+      - run:
+          name: "Installing dependencies"
+          command: |
+            apk add --no-cache py-pip jq jo > /dev/null 2>&1
+            pip install awscli > /dev/null 2>&1
+      - configure_aws_credentials:
+          aws_access_key_id: << parameters.aws_access_key_id >>
+          aws_secret_access_key: << parameters.aws_secret_access_key >>
+      - run:
+          name: "Evaluating AWS ECR security scan"
+          command: |
+            echo "Evaluating AWS ECR security scan."
+            aws ecr describe-image-scan-findings \
+              --repository-name << parameters.repository_name >> \
+              --image-id << parameters.image_id >> \
+              --region << parameters.aws_region >> \
+              > /tmp/scan_result || (echo "Could not retrieve vulnerability report. Breaking the build." && exit 1)
+            if cat /tmp/scan_result | grep -q 'CRITICAL'; then
+                echo "Found a CRITICAL vulnerability! Ooops!"
+            else
+                echo "The ECR scan didn't find any CRITICAL vulnerabilities."
+            fi
+            echo "Uploading vulnerability scan report to S3"
+            aws s3 cp /tmp/scan_result s3://ci-cd-poc-vuln-report/<< parameters.docker_image_name >>-<< parameters.docker_image_tag >>.json
+            jo -p build_url=${CIRCLE_BUILD_URL} image_name=<< parameters.docker_image_name >> image_tag=<< parameters.docker_image_tag >> vuln_scan_report_s3_bucket=ci-cd-poc-vuln-report vuln_scan_report_s3_object_path=<< parameters.docker_image_name >>-<< parameters.docker_image_tag >>.json > /tmp/sns_message.json
+            cat /tmp/sns_message.json
+            aws --region eu-west-1 sns publish --topic-arn arn:aws:sns:eu-west-1:909130508899:ci-cd-poc --message file:///tmp/sns_message.json
+
+            # TODO přidat počet findings tady do výstupu
