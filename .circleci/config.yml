@@ -1,0 +1,89 @@
+version: 2.1
+
+orbs:
+  eks-helpers: helper-orbs/eks-helper@1.0.3
+
+workflows:
+  main:
+    jobs:
+      - eks-helpers/build_docker:
+          name: build_docker
+          docker_dockerfile: Dockerfile
+          docker_image_name: poc-dirty-vulnerable-container
+          docker_image_tag: ${CIRCLE_SHA1}
+      
+      - push_ecr:
+          requires: ["build_docker"]
+          name: push_to_ecr
+          aws_access_key_id: ${AWS_ACCESS_KEY_ID}
+          aws_secret_access_key: ${AWS_SECRET_ACCESS_KEY}
+          aws_account_id: "909130508899"
+          aws_region: "eu-west-1"
+          docker_image_name: poc-dirty-vulnerable-container
+          docker_image_tag: ${CIRCLE_SHA1}
+          context: ci_cd_poc
+
+commands:
+  configure_aws_credentials:
+    description: |
+      Sets up specified AWS credentials according to specified parameters.
+    parameters:
+      aws_credentials_name:
+        type: string
+        default: "main"
+      aws_access_key_id:
+        type: string
+      aws_secret_access_key:
+        type: string
+    steps:
+      - run:
+          name: "Configuring AWS credentials"
+          command: |
+            export TERM=xterm
+            mkdir -p ~/.aws
+            echo "[<< parameters.aws_credentials_name >>]" > ~/.aws/credentials
+            echo "aws_access_key_id = << parameters.aws_access_key_id >>" >> ~/.aws/credentials
+            echo "aws_secret_access_key = << parameters.aws_secret_access_key >>" >> ~/.aws/credentials
+
+jobs:
+  push_ecr:
+    parameters:
+      aws_access_key_id:
+        type: string
+      aws_secret_access_key:
+        type: string
+      aws_account_id:
+        type: string
+      aws_region:
+        type: string
+      docker_image_name:
+        type: string
+      docker_image_tag:
+        type: string
+    docker:
+      - image: docker:18.09.6
+    steps:
+      - init:
+          name: "Installing dependencies"
+          command: |
+            apk add --no-cache ca-certificates py-pip bash git > /dev/null 2>&1
+            pip install awscli > /dev/null 2>&1
+      - setup_remote_docker
+      - attach_workspace:
+          at: /tmp/out
+      - run:
+          name: "Importing docker image"
+          command: |
+            docker load --input /tmp/out/<< parameters.docker_image_name >>.tgz
+            docker images
+      - configure_aws_credentials:
+          aws_access_key_id: << parameters.aws_access_key_id >>
+          aws_secret_access_key: << parameters.aws_secret_access_key >>
+      - run:
+          name: "Pushing docker image to ECR"
+          command: |
+            docker tag \
+                << parameters.docker_image_name >>:<< parameters.docker_image_tag >> \
+                << parameters.aws_account_id >>.dkr.ecr.<< parameters.aws_region >>.amazonaws.com/<< parameters.docker_image_name >>:<< parameters.docker_image_tag >>
+            eval "$(aws ecr get-login --region << parameters.aws_region >> --no-include-email)"
+            docker push << parameters.aws_account_id >>.dkr.ecr.<< parameters.aws_region >>.amazonaws.com/<< parameters.docker_image_name >>:<< parameters.docker_image_tag >>
