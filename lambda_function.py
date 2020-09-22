@@ -1,6 +1,7 @@
+import os
 import json
 import boto3
-from botocore.vendored import requests
+import requests
 
 
 # SLACK_CHANNEL = os.environ.get("slack_channel")
@@ -12,7 +13,7 @@ def format_slack_message(image_name, image_tag, build_url, vuln_findings):
     text = f"Vuln scan for {image_name}:{image_tag} found {vuln_findings} (build: {build_url})"
     channel = SLACK_CHANNEL
     username = "ECR vuln scan report"
-    icon_emoji = ":black_circle:"
+    icon_emoji = ":ghost:"
 
     slack_message = dict(
         text=text,
